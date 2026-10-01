@@ -16,7 +16,6 @@ import httpx
 from fastmcp import Client
 from fastmcp.client.transports import SSETransport, StreamableHttpTransport
 from fastmcp.exceptions import ToolError
-from mcp import McpError
 from mcp.shared._httpx_utils import McpHttpClientFactory
 from tenacity import (
     AsyncRetrying,
@@ -25,6 +24,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from mcp import McpError
 from tracecat.agent.common.types import MCPHttpServerConfig, MCPToolDefinition
 from tracecat.agent.mcp.http_limits import (
     MCPResponseTooLargeError,

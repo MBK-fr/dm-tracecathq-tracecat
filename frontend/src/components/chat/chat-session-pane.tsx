@@ -35,6 +35,7 @@ import type {
   AgentSessionReadVercel,
   ApprovalDecision,
   ChatReadVercel,
+  WorkspaceChatOverrides,
 } from "@/client"
 import { Action, Actions } from "@/components/ai-elements/actions"
 import {
@@ -98,6 +99,7 @@ import {
 } from "@/hooks/use-chat"
 import { useMentions } from "@/hooks/use-mentions"
 import { useOverflowBadges } from "@/hooks/use-overflow-badges"
+import { useWorkspaceChatTools } from "@/hooks/use-workspace-chat-tools"
 import { isAgentToolSelectable } from "@/lib/agent-tools"
 import {
   type ApprovalCard,
@@ -245,7 +247,8 @@ export interface ChatSessionPaneProps {
   onBeforeSend?: (
     messageText: string,
     selectedTools?: string[],
-    selectedMcpIntegrations?: string[]
+    selectedMcpIntegrations?: string[],
+    workspaceChatOverrides?: WorkspaceChatOverrides | null
   ) => Promise<string | null>
   /**
    * Render a temporary user message and assistant loading dots while
@@ -355,7 +358,11 @@ export function ChatSessionPane({
   const { updateChat, isUpdating: isUpdatingTools } = useUpdateChat(workspaceId)
   const { cancelChatTurn, isCancellingChatTurn } =
     useCancelChatTurn(workspaceId)
-  const { registryActions } = useBuilderRegistryActions()
+  const isWorkspaceChat = surface === "workspace-chat"
+  const workspaceToolsEnabled = isWorkspaceChat && toolsEnabled
+  const { registryActions } = useBuilderRegistryActions(
+    workspaceToolsEnabled ? { workspaceId, configuredOnly: true } : undefined
+  )
   const sessionMcpEnabled = mcpEnabled && entityType === "copilot"
   const { mcpIntegrations } = useListMcpIntegrations(workspaceId, undefined, {
     enabled: toolsEnabled && sessionMcpEnabled,
@@ -372,7 +379,13 @@ export function ChatSessionPane({
     () => (chat?.messages || []).map(toUIMessage),
     [chat?.messages]
   )
-  const isWorkspaceChat = surface === "workspace-chat"
+  const workspaceTools = useWorkspaceChatTools({
+    workspaceId,
+    chat: chat && "harness_type" in chat ? chat : undefined,
+    enabled: workspaceToolsEnabled,
+    registryActions: registryActions ?? [],
+    mcpIntegrations: mcpIntegrations ?? [],
+  })
   const chatContentCenterClass = isWorkspaceChat
     ? "mx-auto w-full max-w-[56rem]"
     : undefined
@@ -495,7 +508,11 @@ export function ChatSessionPane({
 
   const isOptimisticBeforeSendPending = optimisticMessageText !== null
   const isInputDisabled =
-    isReadonly || inputDisabled || isOptimisticBeforeSendPending || !canSubmit
+    isReadonly ||
+    inputDisabled ||
+    isOptimisticBeforeSendPending ||
+    !canSubmit ||
+    (workspaceToolsEnabled && workspaceTools.disabled)
 
   const isGeneratingTurn = status === "submitted" || status === "streaming"
   const [cancelRequested, setCancelRequested] = useState(false)
@@ -974,7 +991,12 @@ export function ChatSessionPane({
   const handleSubmit = async (message: PromptInputMessage) => {
     const hasText = Boolean(message.text?.trim())
 
-    if (!hasText || isReadonly || !modelInfo) {
+    if (
+      !hasText ||
+      isReadonly ||
+      !modelInfo ||
+      (workspaceToolsEnabled && workspaceTools.disabled)
+    ) {
       return
     }
 
@@ -1081,11 +1103,18 @@ export function ChatSessionPane({
         clearSubmittedDraft()
       }
 
-      const result = await onBeforeSend(
-        messageText,
-        selectedTools,
-        selectedMcpIntegrations
-      )
+      const result = workspaceToolsEnabled
+        ? await onBeforeSend(
+            messageText,
+            undefined,
+            undefined,
+            workspaceTools.overrides
+          )
+        : await onBeforeSend(
+            messageText,
+            selectedTools,
+            selectedMcpIntegrations
+          )
       // Only clear input if onBeforeSend succeeded (non-null)
       // If null, the action was cancelled and user keeps their draft
       if (result !== null) {
@@ -1204,14 +1233,48 @@ export function ChatSessionPane({
             <PromptInputTools>
               {toolsEnabled && !isReadonly && (
                 <ChatToolsPicker
-                  registryActions={registryActions ?? []}
-                  selectedTools={selectedTools}
-                  onToolsChange={commitSelectedTools}
-                  mcpIntegrations={mcpIntegrations ?? []}
-                  selectedMcpIntegrations={selectedMcpIntegrations}
-                  onMcpChange={commitSelectedMcpIntegrations}
+                  registryActions={
+                    workspaceToolsEnabled
+                      ? workspaceTools.registryActions
+                      : (registryActions ?? [])
+                  }
+                  selectedTools={
+                    workspaceToolsEnabled
+                      ? workspaceTools.selectedTools
+                      : selectedTools
+                  }
+                  onToolsChange={
+                    workspaceToolsEnabled
+                      ? workspaceTools.onToolsChange
+                      : commitSelectedTools
+                  }
+                  mcpIntegrations={
+                    workspaceToolsEnabled
+                      ? workspaceTools.mcpIntegrations
+                      : (mcpIntegrations ?? [])
+                  }
+                  selectedMcpIntegrations={
+                    workspaceToolsEnabled
+                      ? workspaceTools.selectedMcpIntegrations
+                      : selectedMcpIntegrations
+                  }
+                  onMcpChange={
+                    workspaceToolsEnabled
+                      ? workspaceTools.onMcpChange
+                      : commitSelectedMcpIntegrations
+                  }
+                  workspaceManaged={workspaceToolsEnabled}
+                  subagents={workspaceTools.subagents}
+                  selectedSubagents={workspaceTools.selectedSubagents}
+                  onSubagentsChange={workspaceTools.onSubagentsChange}
+                  hasOverrides={workspaceTools.overrides !== null}
+                  onReset={workspaceTools.onReset}
                   mcpEnabled={sessionMcpEnabled}
-                  disabled={inputDisabled || isUpdatingTools}
+                  disabled={
+                    inputDisabled ||
+                    isUpdatingTools ||
+                    (workspaceToolsEnabled && workspaceTools.disabled)
+                  }
                   surface={surface}
                   mcpIntegrationsHref={`/workspaces/${workspaceId}/mcp-servers`}
                 />
